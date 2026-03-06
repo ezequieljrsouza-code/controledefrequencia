@@ -2,34 +2,25 @@ import streamlit as st
 import google.generativeai as genai
 import PIL.Image
 import json
-import base64
 
 # Configuração da página
-st.set_page_config(page_title="Controle de Frequência - Ezequiel Miranda", page_icon="📝", layout="centered")
+st.set_page_config(page_title="Controle de Frequência - Ezequiel Miranda", page_icon="📝", layout="wide")
 
-# Estilo CSS para melhorar a aparência
+# Estilo CSS para melhorar a interface
 st.markdown("""
     <style>
-    .main {
-        background-color: #f8fafc;
-    }
-    .stButton>button {
-        width: 100%;
-        border-radius: 10px;
-    }
-    .attendance-row {
+    .main { background-color: #f8fafc; }
+    .stRadio > div { flex-direction: row; align-items: center; }
+    .stRadio label { margin-right: 15px; }
+    div[data-testid="column"] {
         padding: 10px;
-        border-bottom: 1px solid #e2e8f0;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
+        border-bottom: 1px solid #eee;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# Inicialização da API Gemini
-# Nota: No Streamlit Cloud, adicione sua chave em "Secrets"
-API_KEY = "" 
+# Configuração da API Gemini (Insira sua chave aqui ou nos Secrets do Streamlit)
+API_KEY = "SUA_CHAVE_AQUI" 
 genai.configure(api_key=API_KEY)
 
 # Inicialização do estado da sessão
@@ -50,62 +41,69 @@ def process_image(uploaded_file):
         text = response.text
         
         if text:
-            extracted = [n.strip() for n in text.split(',') if len(n.strip()) > 3]
-            # Limpeza de duplicados e palavras-chave indesejadas
-            extracted = [n for n in extracted if "PRODUTIVO" not in n.upper() and "NOME" not in n.upper()]
+            # Limpeza e formatação dos nomes
+            extracted = [n.strip().upper() for n in text.split(',') if len(n.strip()) > 3]
+            # Remove termos que não são nomes
+            extracted = [n for n in extracted if "PRODUTIVO" not in n and "NOME" not in n]
             
+            # Atualiza a lista global sem duplicados
             new_names = sorted(list(set(st.session_state.names + extracted)))
             st.session_state.names = new_names
             
-            # Inicializa presença para novos nomes
+            # Inicializa o dicionário de presença
             for name in extracted:
                 if name not in st.session_state.attendance:
-                    st.session_state.attendance[name] = {"status": "Presente", "justification": ""}
+                    st.session_state.attendance[name] = {"status": "Presente", "justification": "N/A"}
             return True
     except Exception as e:
         st.error(f"Erro ao processar imagem: {e}")
         return False
 
-# Interface do Utilizador
+# --- INTERFACE ---
 st.title("📝 Controle de Frequência")
 st.subheader(f"Responsável: Ezequiel Miranda (Marituba/PA)")
 
-# Upload de Ficheiro
+# Upload de Arquivo
 with st.expander("📷 Carregar Lista de Nomes (Imagem)", expanded=not st.session_state.names):
     uploaded_file = st.file_uploader("Suba a foto da lista de produtividade", type=["png", "jpg", "jpeg"])
-    if uploaded_file is not None:
-        if st.button("Processar Imagem"):
+    if uploaded_file:
+        if st.button("🚀 Processar e Gerar Lista"):
             with st.spinner("A extrair nomes com IA..."):
                 if process_image(uploaded_file):
                     st.success("Nomes extraídos com sucesso!")
                     st.rerun()
 
-# Botão para limpar lista
+# Barra Lateral
 if st.session_state.names:
-    if st.sidebar.button("🗑️ Limpar Toda a Lista"):
+    if st.sidebar.button("🗑️ Limpar Tudo"):
         st.session_state.names = []
         st.session_state.attendance = {}
         st.rerun()
 
-# Lista de Chamada
+# --- LISTA DE CHAMADA ---
 if st.session_state.names:
     st.write("---")
-    st.info(f"Total de pessoas: {len(st.session_state.names)}")
-    
+    header_col1, header_col2, header_col3 = st.columns([2, 1, 1])
+    header_col1.subheader("Nome do Colaborador")
+    header_col2.subheader("Presença")
+    header_col3.subheader("Justificativa (se ABS)")
+
     for name in st.session_state.names:
         col1, col2, col3 = st.columns([2, 1, 1])
         
         with col1:
-            st.markdown(f"**{name.upper()}**")
+            st.markdown(f"**{name}**")
             
         with col2:
+            # Define o índice baseado no que já está salvo
             current_status = st.session_state.attendance[name]["status"]
-            status_idx = 0 if current_status == "Presente" else 1
+            status_options = ["Presente", "ABS"]
+            default_idx = status_options.index(current_status) if current_status in status_options else 0
             
             status = st.radio(
-                f"Status para {name}",
-                ["Presente", "ABS"],
-                index=status_idx,
+                "Status",
+                status_options,
+                index=default_idx,
                 key=f"status_{name}",
                 label_visibility="collapsed",
                 horizontal=True
@@ -114,31 +112,42 @@ if st.session_state.names:
             
         with col3:
             if status == "ABS":
+                # Lista suspensa conforme solicitado
+                just_options = ["Injustificado", "Atestado", "Declaração"]
+                current_just = st.session_state.attendance[name].get("justification", "Injustificado")
+                # Garante que o index seja válido
+                just_idx = just_options.index(current_just) if current_just in just_options else 0
+                
                 just = st.selectbox(
-                    f"Justificativa para {name}",
-                    ["Injustificado", "Atestado", "Declaração"],
+                    "Motivo",
+                    just_options,
+                    index=just_idx,
                     key=f"just_{name}",
                     label_visibility="collapsed"
                 )
                 st.session_state.attendance[name]["justification"] = just
             else:
-                st.session_state.attendance[name]["justification"] = ""
-                st.write("-")
+                st.session_state.attendance[name]["justification"] = "N/A"
+                st.write("✅")
 
-    # Botão de Exportação
+    # --- EXPORTAÇÃO ---
     st.write("---")
-    if st.button("💾 Gerar Relatório (JSON/Texto)"):
+    if st.button("💾 Finalizar e Gerar Relatório"):
         report = {
             "responsavel": "Ezequiel Miranda",
+            "unidade": "Marituba/PA",
+            "total_colaboradores": len(st.session_state.names),
             "dados": st.session_state.attendance
         }
         json_string = json.dumps(report, indent=4, ensure_ascii=False)
+        
         st.download_button(
-            label="Descarregar Relatório",
-            file_name="frequencia_marituba.json",
+            label="⬇️ Baixar Relatório (JSON)",
+            file_name=f"frequencia_{name}.json",
             mime="application/json",
             data=json_string
         )
+        st.json(report)
 
 else:
-    st.warning("Aguardando carregamento de nomes via imagem.")
+    st.info("Aguardando o upload da imagem para gerar a lista de presença.")
