@@ -29,7 +29,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # Inicialização da API Gemini usando Secrets do Streamlit
-API_KEY = st.secrets["GEMINI_API_KEY"]
+API_KEY = st.secrets["AIzaSyABFt80KlM50OPrqvGSKAR4D_3s3d8e5C4"]
 genai.configure(api_key=API_KEY)
 
 # Inicialização do estado da sessão
