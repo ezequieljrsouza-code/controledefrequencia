@@ -40,7 +40,7 @@ if 'attendance' not in st.session_state:
 def process_image(uploaded_file):
     try:
         # Atualizado para o modelo disponível na sua chave
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        model = genai.GenerativeModel('gemini-1.5-flash-8b')
         img = PIL.Image.open(uploaded_file)
         
         prompt = """
