@@ -16,144 +16,142 @@ st.markdown("""
     <style>
     .stRadio [data-testid="stMarkdownContainer"] p { font-size: 0.8rem; }
     .stSelectbox label { display: none; }
+    .stCode { background-color: #f1f5f9; border-left: 5px solid #2563eb; }
     </style>
     """, unsafe_allow_html=True)
 
 # 2. Configuração de Segurança (Secrets)
 try:
-    # Busca a chave configurada no dashboard do Streamlit Cloud
-    API_KEY = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=API_KEY)
-except Exception:
-    st.error("⚠️ Erro: A chave 'GEMINI_API_KEY' não foi configurada nos Secrets do Streamlit.")
-    st.info("Acesse Settings -> Secrets no painel do Streamlit e adicione: GEMINI_API_KEY = 'sua_chave'")
+    if "GEMINI_API_KEY" in st.secrets:
+        API_KEY = st.secrets["GEMINI_API_KEY"]
+        genai.configure(api_key=API_KEY)
+    else:
+        st.error("⚠️ Chave 'GEMINI_API_KEY' não encontrada nos Secrets do Streamlit.")
+        st.stop()
+except Exception as e:
+    st.error(f"Erro de configuração: {e}")
     st.stop()
 
 # 3. Inicialização do Estado da Sessão
 if 'attendance' not in st.session_state:
     st.session_state.attendance = {}
 
-# 4. Função de Processamento com IA
+# 4. Função de Processamento com IA (Versão Blindada)
 def process_image(uploaded_file):
+    # Lista de nomes de modelos para tentar em sequência caso dê 404
+    model_names = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "models/gemini-1.5-flash"]
+    
+    success = False
+    response_text = ""
+    
+    img = PIL.Image.open(uploaded_file)
+    
+    for m_name in model_names:
+        try:
+            model = genai.GenerativeModel(m_name)
+            prompt = """
+            Analise a tabela de produtividade. 
+            Extraia os nomes (coluna 'Nome') e o status (coluna 'PRODUTIVO ?').
+            Retorne APENAS um JSON puro no formato:
+            [{"nome": "NOME COMPLETO", "categoria": "SIM ou PULMÃO"}]
+            Não escreva explicações, apenas o JSON.
+            """
+            response = model.generate_content([prompt, img])
+            response_text = response.text
+            success = True
+            break # Se funcionou, sai do loop
+        except Exception:
+            continue # Tenta o próximo nome de modelo
+            
+    if not success:
+        st.error("Não foi possível conectar aos modelos da IA (Erro 404 persistente). Verifique sua API Key.")
+        return False
+
     try:
-        # Usando o caminho completo do modelo para evitar erro 404
-        model = genai.GenerativeModel(model_name="models/gemini-1.5-flash")
-        img = PIL.Image.open(uploaded_file)
-        
-        prompt = """
-        Analise a tabela na imagem. 
-        Extraia os nomes da primeira coluna e o status da segunda coluna (PRODUTIVO ?).
-        Retorne APENAS um JSON no seguinte formato:
-        [
-            {"nome": "NOME DA PESSOA", "categoria": "SIM ou PULMÃO"}
-        ]
-        Ignore o cabeçalho 'Nome' e 'Produtivo'. Se na segunda coluna estiver 'PULMÃO', marque como 'PULMÃO'.
-        """
-        
-        response = model.generate_content([prompt, img])
-        
-        # Limpeza do texto para extrair apenas o JSON
-        clean_text = response.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(clean_text)
+        # Extração limpa do JSON
+        start = response_text.find('[')
+        end = response_text.rfind(']') + 1
+        if start == -1 or end == 0:
+            st.error("A IA não retornou um formato de lista válido.")
+            return False
+            
+        data = json.loads(response_text[start:end])
         
         for item in data:
-            nome = item["nome"].strip().upper()
-            if len(nome) < 3: continue # Pula ruídos ou textos curtos demais
+            nome = item.get("nome", "").strip().upper()
+            if len(nome) < 3: continue
             
-            # Adiciona apenas se o nome ainda não estiver na lista
             if nome not in st.session_state.attendance:
+                cat = item.get("categoria", "SIM").strip().upper()
                 st.session_state.attendance[nome] = {
-                    "categoria": item["categoria"].strip().upper(),
+                    "categoria": cat,
                     "status": "Presente", 
                     "justification": ""
                 }
         return True
     except Exception as e:
-        st.error(f"Erro ao processar imagem: {e}")
+        st.error(f"Erro ao ler os dados da IA: {e}")
         return False
 
 # 5. Interface Principal
 st.title("📝 Controle de Frequência")
 st.caption("Responsável: Ezequiel Miranda | Marituba-PA")
 
-# Upload de Arquivo
-with st.expander("📷 Carregar Lista de Produtividade", expanded=not st.session_state.attendance):
-    uploaded_file = st.file_uploader("Selecione a imagem da lista", type=["png", "jpg", "jpeg"])
-    if uploaded_file and st.button("Extrair Nomes da Imagem"):
-        with st.spinner("A IA está lendo os nomes..."):
+# Upload
+with st.expander("📷 Carregar Foto da Lista", expanded=not st.session_state.attendance):
+    uploaded_file = st.file_uploader("Suba a imagem da lista de produtividade", type=["png", "jpg", "jpeg"])
+    if uploaded_file and st.button("Processar Lista Agora"):
+        with st.spinner("Lendo nomes com Inteligência Artificial..."):
             if process_image(uploaded_file):
-                st.success("Nomes carregados com sucesso!")
+                st.success("Lista carregada!")
                 st.rerun()
 
-# 6. Lista de Chamada Interativa
+# 6. Lista de Chamada
 if st.session_state.attendance:
     st.write("---")
-    st.subheader("Lista de Presença")
-    
-    # Ordena nomes para facilitar a busca
     nomes_ordenados = sorted(st.session_state.attendance.keys())
     
     for name in nomes_ordenados:
         dados = st.session_state.attendance[name]
-        col_nome, col_status, col_just = st.columns([2, 1, 1.5])
+        col_n, col_s, col_j = st.columns([2, 1, 1.5])
         
-        with col_nome:
-            # Identifica visualmente se é pulmão
-            is_pulmao = "PULM" in dados["categoria"]
-            st.markdown(f"**{name}** {'🫁' if is_pulmao else ''}")
+        with col_n:
+            is_p = "PULM" in dados["categoria"]
+            st.markdown(f"**{name}** {'🫁' if is_p else ''}")
             
-        with col_status:
-            status = st.radio(
-                f"Status_{name}", ["Presente", "ABS"], 
-                key=f"st_{name}", label_visibility="collapsed", horizontal=True
-            )
+        with col_s:
+            status = st.radio(f"S_{name}", ["Presente", "ABS"], key=f"s_{name}", 
+                              label_visibility="collapsed", horizontal=True)
             st.session_state.attendance[name]["status"] = status
             
-        with col_just:
+        with col_j:
             if status == "ABS":
-                justificativa = st.selectbox(
-                    f"Just_{name}", ["Injustificado", "Atestado", "Declaração", "Suspensão"],
-                    key=f"js_{name}", label_visibility="collapsed"
-                )
-                st.session_state.attendance[name]["justification"] = justificativa
+                just = st.selectbox(f"J_{name}", ["Injustificado", "Atestado", "Declaração", "Suspensão"],
+                                    key=f"j_{name}", label_visibility="collapsed")
+                st.session_state.attendance[name]["justification"] = just
             else:
-                st.session_state.attendance[name]["justification"] = ""
                 st.write("-")
 
-    # 7. Gerador de Relatório Formatado
+    # 7. Relatório Final
     st.write("---")
     if st.button("📋 Gerar Relatório para WhatsApp"):
         hoje = datetime.now().strftime("%d/%m")
-        lista_na = []
-        lista_pulmao = []
+        na, pulm = [], []
         
         for n in nomes_ordenados:
             d = st.session_state.attendance[n]
             if d["status"] == "ABS":
-                # Formatação conforme o modelo solicitado
-                if "PULM" in d["categoria"]:
-                    lista_pulmao.append(f"- {n} ❌ ( {d['justification']})")
-                else:
-                    lista_na.append(f"- {n} ( {d['justification']})")
+                txt = f"- {n} {'❌ ' if 'PULM' in d['categoria'] else ''}( {d['justification']})"
+                if "PULM" in d["categoria"]: pulm.append(txt)
+                else: na.append(txt)
         
-        # Montagem do Texto Final
-        relatorio = f"ABS ({hoje})\n\n"
-        relatorio += "N/A\n"
-        relatorio += "\n".join(lista_na) if lista_na else "Nenhum"
+        res = f"ABS ({hoje})\n\nN/A\n" + ("\n".join(na) if na else "Nenhum")
+        res += f"\n\nPulmões 🫁\n" + ("\n".join(pulm) if pulm else "Nenhum")
+        res += f"\n\nABS real: {len(na)}"
         
-        relatorio += "\n\nPulmões 🫁\n"
-        relatorio += "\n".join(lista_pulmao) if lista_pulmao else "Nenhum"
-        
-        relatorio += f"\n\nABS real: {len(lista_na)}"
-        
-        st.subheader("Relatório Pronto:")
-        st.code(relatorio, language="text")
-        st.info("Copie o texto acima e cole no WhatsApp.")
+        st.code(res, language="text")
+        st.info("Copie o texto acima e envie no grupo.")
 
-# Barra lateral para controle
-if st.sidebar.button("🗑️ Limpar Lista Atual"):
+if st.sidebar.button("🗑️ Limpar Lista"):
     st.session_state.attendance = {}
     st.rerun()
-
-st.sidebar.write("---")
-st.sidebar.info("Dica: Use imagens com boa iluminação para a IA não errar os nomes.")
